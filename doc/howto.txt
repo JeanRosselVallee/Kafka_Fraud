@@ -1,0 +1,97 @@
+======================= Git ======================
+Install
+    winget install --id Git.Git -e --source winget
+Locate folder
+    %LOCALAPPDATA%\Programs\Git\
+Add to PATH 
+    $env:Path += ";$env:USERPROFILE\AppData\Local\Programs\Git\bin".
+Check
+    git --version
+Clone repository
+    git clone https://github.com/JeanRosselVallee/BlentPythonProject.git
+Add .gitconfig & include in .gitignore
+To update sources in a GitHUb Codespace, clone the repository:
+   git pull origin main
+
+======================== Python ====================
+Install Python extension proposed by VScode
+Install Python 3.13 on terminal
+    winget search python
+    winget install --id 9PNRBTZXMB4Z
+    python --version
+    [[$env:Path += ";$env:LOCALAPPDATA\Microsoft\WindowsApps"]]
+Set interpreter
+    ^CTRL+P typed "Python: Select Interpreter" = python 3.13
+
+======================== Environment ====================
+Create project's environment
+    sudo apt install python3.14-venv
+    sudo python3 -m venv .venv
+    source .\.venv\Scripts\activate
+Install packages
+    pip install -r requirements.txt
+Exit
+    deactivate
+
+========================= Execution ======================
+Run app & create DB
+    python run.py
+Populate DB
+    python -m app.database.populate
+
+========================= SQ Lite ========================
+Install "SQLite" by alexcvzz 
+    Left Bar "Extensions"
+    Select DB Connection
+    Right click => Run query
+
+========================= Code Check ========================
+Format Check & Update Python files : blanks, row length, etc.
+    black --line-length 79 .
+
+Quality Check & Warn : logical errors, unused variables, etc.
+    flake8 config.py
+    flake8 run.py
+    cd app/
+    flake8 .
+    cd tests/
+    flake8 .
+    cd ..
+
+======================== NotebookLM =========================
+Run in a PowerShell terminal:
+- List all pertinent files in PRoject1.txt
+Get-ChildItem -Recurse -File | Where-Object { $_.FullName -notmatch '\\(\.venv|\.git)\\' } | ForEach-Object { $_.FullName.Replace($(Get-Location).Path + "\", "") 
+} | Out-File Project1.txt
+
+- Copy files' contents to Full_Project_Snapshot.txt
+Get-Content Project1.txt | ForEach-Object { 
+    "--- FILE: $_ ---"; 
+    if ($_ -eq "digimarket.db") { 
+        "[Binary Database File - Content Skipped]" 
+    } elseif (Test-Path $_) { 
+        Get-Content $_ 
+    } else { 
+        "Warning: File not found" 
+    }; 
+    ""; "" 
+} | Out-File Full_Project_Snapshot.txt
+
+================= PythonAnywhere (Web Host) =================
+Bash Console :
+    git clone https://github.com/...
+    cd BlentPythonProject/
+    python3.11 -m venv ~/.virtualenvs/my-env
+    source ~/.virtualenvs/my-env/bin/activate
+    pip install --upgrade pip
+    pip install -r requirements.txt
+    deactivate
+Web Tab :
+    Add a Web App
+    Select Manual Configuration
+        choose Python 3.11.
+    Virtualenv Path: Enter /home/jvisa4031/.virtualenvs/my-env
+    Edit the WSGI configuration file
+        "from run import app as application" gets app instance from run.py
+    Click the green Reload button.
+    Click on the title's link
