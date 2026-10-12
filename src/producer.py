@@ -1,60 +1,78 @@
+# Syntax: python src/producer.py
 # Goal : stream bank transactions to Kafka
-# Steps :
-# 1. Get df_sample of 300 transactions
-#    - source = Parquet's 'URL
-#    - filter by step (between 1 & num_steps)
-# 2. Send to topic "transactions" 
-#    - batches of 20 
-#    - wait 1 second after each batch
-# 4. Repeat until all transactions are sent, then start over from the beginning
 
 import time
-import json
 import pandas as pd
 import math
+import lib_common as cmn
+import logging
 from kafka import KafkaProducer
 
-# Kafka Bokers
-SERVERS = [
-    "108.131.108.60:9092",
-    "3.249.43.106:9092",
-    "63.35.224.191:9092"
-]
+# Logging
+cmn.setup_logging()
+APP_LOGGER_NAME = "fraud_detection"
+logger = logging.getLogger(APP_LOGGER_NAME)
 
+# Get Kafka Brokers' list 
+with open("./config/broker_servers.txt") as f:
+    # Remove newline chars from  non-empty lines
+    SERVERS = [line.strip() for line in f if line.strip()]
+
+# Source = Parquet's URL
 source_folder = "~/Documents/Dev/git_projects/Kafka_Fraud/data"
 mock_file = source_folder + "/transactions.parquet"
 
 max_sample_size = 300
 max_batch_size = 20
 
-# Producer Fire & Forget
-producer = KafkaProducer(
-    bootstrap_servers=SERVERS,
-    value_serializer=lambda x: json.dumps(x).encode()  # converts dict to bytes
-)
-print("Producer connected to Kafka brokers", producer.bootstrap_connected())
+# Producer (Fire & Forget)
+series_to_bytes = lambda series_i: series_i.to_json().encode()
+try:
+    producer = KafkaProducer(
+        bootstrap_servers=SERVERS,
+        value_serializer=series_to_bytes
+    )
+    logger.info('Producer created')
+except Exception as e:
+    logger.error(f"Producer creation failed: {e}")
+    exit(1)
 
+# Check connection to Brokers
+topic = "transactions"
+logger.info(f"Created partition's id(s): {producer.partitions_for(topic)}")
+
+# Load transactions as DF
 df_transactions = pd.read_parquet(mock_file)
 num_steps = max(df_transactions["step"])
-current_step = 1
+current_step = 0
 
-while True:
-    print("Current step", current_step)
+# Loop over steps
+# while True:
+while current_step < 2:
+    # Increase "step" in a cycle (1..num_steps)
+    current_step = (current_step + 1) % num_steps
 
+    # Get a sample for current step
     filter_step = (df_transactions["step"] == current_step)
     df_sample = df_transactions[filter_step].head(max_sample_size)
     sample_size = df_sample.shape[0]
+    logger.info(f"Sent {sample_size:,} transactions for step {current_step}")
+
+    # Get number of batches in the sample
     n_batches = math.ceil(sample_size / max_batch_size)
 
-    sample_index_of_record_1_in_batch = range(0, sample_size, max_batch_size)
-    for batch_start_i in sample_index_of_record_1_in_batch:
+    # List start positions of batches
+    batch_start_positions = range(0, sample_size, max_batch_size)
+
+    # Iterate batches
+    for batch_start_i in batch_start_positions:
         batch_end_i = batch_start_i + max_batch_size
-        df_batch = df_sample.iloc[batch_start_i:batch_end_i]
-        for _, transaction_j in df_batch.iterrows():
-            producer.send(
-                "transactions",  # Topic
-                transaction_j.to_json(),  # Message
-            )
+        df_batch_i = df_sample.iloc[batch_start_i:batch_end_i]
+    
+        # Send each transaction in current batch
+        for _, series_transaction in df_batch_i.iterrows():
+            producer.send(topic, series_transaction)
         time.sleep(1 / n_batches)
 
-    current_step = (current_step + 1) % num_steps
+    # Send remaining records in buffer
+    producer.flush()
