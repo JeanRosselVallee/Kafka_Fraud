@@ -2,6 +2,7 @@ pandas
 fastparquet
 jinja2
 colorlog
+dataclasses
 #pyarrow
 #matplotlib
 #pandas==1.5.3

@@ -41,31 +41,31 @@ except Exception as e:
 # ____________________ Generate Stats ____________________
 
 # Instantiate cycle counters
-cycle = cmn.CycleCounters(logger, cycle_duration)
-# Flag to initialize cycle counters
-stats_started = False
+cycle = cmn.Cycle(logger, cycle_duration)
+# Flag to check first record
+is_1st_record = True
 
 try:
     for consumer_record_i in consumer:
 
-        if not stats_started:
+        if is_1st_record:
             # Print 1st record contents as a dictionary
-            logger.debug(cmn.debug_record(consumer_record_i))
-            logger.info("Get stats per cycle (from " +
-                        f"{process_records_from} record on)")
-            stats_started = True
+            cycle.check_1st_record(consumer_record_i)
+            logger.info("Get stats per cycle from " +
+                        f"{process_records_from} record on")
+            is_1st_record = False
 
         # Get transaction from Record's field 'Value'
-        transaction_i = consumer_record_i.value
+        transaction_i = cmn.Transaction(**consumer_record_i.value)
 
-        # Update stats for current cycle
-        cycle.update_counters(transaction_i)
+        # Update current cycle's stats
+        cycle.set_counters_per_transaction(transaction_i)
 
         # Print stats when cycle ends
         current_time = time.time()
         cycle_ended = (current_time - cycle.start > cycle.duration)
         if cycle_ended:
-            logger.info(cycle.set_counters_per_cycle())
+            cycle.get_counters_per_cycle()
             cycle.reset_counters()
 
 except KeyboardInterrupt:
@@ -73,9 +73,9 @@ except KeyboardInterrupt:
     logger.debug("User Interruption")
 
     # Print stats for last cycle
-    logger.info(cycle.set_counters_per_cycle())
+    cycle.get_counters_per_cycle()
 
     # Print a summary of all cycles
-    cycle.get_summary()
+    cycle.get_summary_of_all_cycles()
 
     exit(0)
