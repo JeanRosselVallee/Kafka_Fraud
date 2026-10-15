@@ -1,82 +1,91 @@
 # Syntax: python src/producer.py
-# Goal : stream bank transactions to Kafka
+# Goal : stream bank transactions to Kafka by a Fire & Forget producer
 
 import time
-import pandas as pd
-import math
-import json
+import pandas
 import lib_common as cmn
 import logging
 from kafka import KafkaProducer
 
-# Logging
-cmn.setup_logging()
-APP_LOGGER_NAME = "fraud_detection"
-logger = logging.getLogger(APP_LOGGER_NAME)
+# Set Producer parameters
+topic_name = "transactions"
+max_sample_size = 300
+max_batch_size = 20
 
-# Get Kafka Brokers' list 
-with open("./config/broker_servers.txt") as f:
-    # Remove newline chars from  non-empty lines
-    SERVERS = [line.strip() for line in f if line.strip()]
+actual_sent_records = 0
 
 # Source = Parquet's URL
 source_folder = "~/Documents/Dev/git_projects/Kafka_Fraud/data"
 mock_file = source_folder + "/transactions.parquet"
 
-max_sample_size = 300
-max_batch_size = 20
+# Logging
+cmn.setup_logging("producer.log")
+APP_LOGGER_NAME = "fraud_detection"
+logger = logging.getLogger(APP_LOGGER_NAME)
 
-# Producer (Fire & Forget)
-dict_to_string_to_bytes = lambda dict_i: json.dumps(dict_i).encode()
+# Get Kafka Brokers' list
+SERVERS = cmn.get_servers_list()
 
+# ___________________ Create Producer ____________________
 try:
     producer = KafkaProducer(
         bootstrap_servers=SERVERS,
-        value_serializer=dict_to_string_to_bytes
+        value_serializer=cmn.convert_dict_to_bytes
     )
     logger.info('Producer created')
 except Exception as e:
-    logger.error(f"Producer creation failed: {e}")
+    logger.error(f"ERROR: Producer creation failed: {e}")
     exit(1)
 
 # Check connection to Brokers
-topic = "transactions"
-logger.info(f"Created partition's id(s): {producer.partitions_for(topic)}")
+# "partitions_for()" connects to Broker & creates topic & partition on-the-fly
+logger.info(f"Partition's id(s): {producer.partitions_for(topic_name)}")
 
-# Load records from Parquet file as DF (transactions are in a String field)
-df_records = pd.read_parquet(mock_file)
+# Load records from Parquet file as DF
+# Transactions are found as strings in field "Value" of records
+df_records = pandas.read_parquet(mock_file)
+
+# Loop over "steps"
+# A "step" is a cyclic sequence corresponding to a set of transactions
 num_steps = max(df_records["step"])
 current_step = 0
 
-# Loop over steps
 # while True:
-while current_step < 5:
-    # Increase "step" in a cycle (1..num_steps)
+while current_step < 20 :
+    # Increment cyclic sequence "step"
     current_step = (current_step + 1) % num_steps
 
-    # Get a sample for current step
+    # Load sample of records corresponding to current step into a DF
     filter_step = (df_records["step"] == current_step)
     df_sample = df_records[filter_step].head(max_sample_size)
     sample_size = df_sample.shape[0]
 
-    # List start positions of batches
+    # Fragment sample DF into DF batches
+    # List start positions of DF batches
     batch_start_positions = range(0, sample_size, max_batch_size)
 
-    # Iterate batches
-    for batch_start_i in batch_start_positions:
-        batch_end_i = batch_start_i + max_batch_size
-        df_batch_i = df_sample.iloc[batch_start_i:batch_end_i]
+    # Iterate on DF batches
+    for start in batch_start_positions:
+        end = start + max_batch_size
+        df_batch_i = df_sample.iloc[start:end]
+        # Convert each DF batch to a list of Dict records
+        option_get_dicts = "records"
+        dict_records = df_batch_i.to_dict(option_get_dicts)
 
-        option_to_get_a_list = "records"
-        records_as_dicts = df_batch_i.to_dict(option_to_get_a_list)
-        for record_as_dict in records_as_dicts:
-            # Send record to Kafka  
-            producer.send(topic, record_as_dict)
+        # Iterate on Dict records
+        for dict_record in dict_records:
+            # ___________ Send record to Kafka _____________
+            producer.send(topic_name, dict_record)
 
-    # Delay to check the reception of records on the Consumer
+    # Print summary of sent records in current step
+    logger.info(f"Step {current_step}: Sent {sample_size:,} records ")
+    actual_sent_records += sample_size
+
+    # Delay to check the flow of batches in the Consumer
     time.sleep(1)
-
-    logger.info(f"Sent {sample_size:,} records for step {current_step}")
 
     # Send remaining records in buffer
     producer.flush()
+
+# Print global summary of sent records
+logger.info(f"Total sent records: {actual_sent_records:,}")

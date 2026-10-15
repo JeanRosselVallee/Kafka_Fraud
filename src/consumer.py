@@ -7,53 +7,59 @@
 # - totals are computed for all cycles
 
 import time
+import os
 import lib_common as cmn
 from kafka import KafkaConsumer
 from kafka.serializer import JsonSerializer
 
-# Set Consumer & Cycle parameters
+# Set Consumer & Cycle variables
 cycle_duration = 2 #60  # seconds
-consumer_topic = "transactions"
+topic_name = "transactions"
+group_id = "CG_fraud_detection"
 # process_records_from = "earliest"
 process_records_from = "latest"
-
-# Create Logger
-logger = cmn.setup_logging()
+cycle_counting_started = False
+process_pid = os.getpid()
 
 # Get Kafka Brokers' list
-# newline chars are removed from non-empty lines
-with open("./config/broker_servers.txt") as f:
-    SERVERS = [line.strip() for line in f if line.strip()]
+SERVERS = cmn.get_servers_list()
 
 # ___________________ Create Consumer ____________________
 try:
     consumer = KafkaConsumer(
-        consumer_topic,
+        topic_name,
         bootstrap_servers=SERVERS,
         value_deserializer=JsonSerializer(),
-        auto_offset_reset=process_records_from
+        auto_offset_reset=process_records_from,
+        group_id=group_id
     )
-    logger.info('Consumer created')
+    print('INFO: Consumer created')
 except Exception as e:
-    logger.error(f"ERROR: Consumer creation failed:\n{e}")
+    print(f"ERROR: Consumer creation failed:\n{e}")
     exit(1)
 
 # ____________________ Generate Stats ____________________
 
-# Instantiate cycle counters
-cycle = cmn.Cycle(logger, cycle_duration)
-# Flag to check first record
-is_1st_record = True
-
 try:
+    # Get stats of each cycle except the last one
     for consumer_record_i in consumer:
 
-        if is_1st_record:
+        if not cycle_counting_started:
+
+            # Create Logger
+            logfile_name = f"consumer_{process_pid}.log"
+            logger = cmn.setup_logging(logfile_name)
+
+            # Start cycle counting
+            cycle = cmn.Cycle(logger, cycle_duration)
+            cycle.start = time.time()
+            cycle_counting_started = True
+
             # Print 1st record contents as a dictionary
             cycle.check_1st_record(consumer_record_i)
+
             logger.info("Get stats per cycle from " +
-                        f"{process_records_from} record on")
-            is_1st_record = False
+                        f"{process_records_from} record on.")
 
         # Get transaction from Record's field 'Value'
         transaction_i = cmn.Transaction(**consumer_record_i.value)
