@@ -50,42 +50,54 @@ df_records = pandas.read_parquet(mock_file)
 num_steps = max(df_records["step"])
 current_step = 0
 
-# while True:
-while current_step < 20 :
-    # Increment cyclic sequence "step"
-    current_step = (current_step + 1) % num_steps
+# ____________________ Send records to Broker ____________________
 
-    # Load sample of records corresponding to current step into a DF
-    filter_step = (df_records["step"] == current_step)
-    df_sample = df_records[filter_step].head(max_sample_size)
-    sample_size = df_sample.shape[0]
+try:
+    # while True:
+    while current_step < 20 :
+        # Increment cyclic sequence "step"
+        current_step = (current_step + 1) % num_steps
 
-    # Fragment sample DF into DF batches
-    # List start positions of DF batches
-    batch_start_positions = range(0, sample_size, max_batch_size)
+        # Load sample of records corresponding to current step into a DF
+        filter_step = (df_records["step"] == current_step)
+        df_sample = df_records[filter_step].head(max_sample_size)
+        sample_size = df_sample.shape[0]
 
-    # Iterate on DF batches
-    for start in batch_start_positions:
-        end = start + max_batch_size
-        df_batch_i = df_sample.iloc[start:end]
-        # Convert each DF batch to a list of Dict records
-        option_get_dicts = "records"
-        dict_records = df_batch_i.to_dict(option_get_dicts)
+        # Fragment sample DF into DF batches
+        # List start positions of DF batches
+        batch_start_positions = range(0, sample_size, max_batch_size)
 
-        # Iterate on Dict records
-        for dict_record in dict_records:
-            # ___________ Send record to Kafka _____________
-            producer.send(topic_name, dict_record)
+        # Iterate on DF batches
+        for start in batch_start_positions:
+            end = start + max_batch_size
+            df_batch_i = df_sample.iloc[start:end]
+            # Convert each DF batch to a list of Dict records
+            option_get_dicts = "records"
+            dict_records = df_batch_i.to_dict(option_get_dicts)
 
-    # Print summary of sent records in current step
-    logger.info(f"Step {current_step}: Sent {sample_size:,} records ")
-    actual_sent_records += sample_size
+            # Iterate on Dict records
+            for dict_record in dict_records:
+                # ___________ Send record to Kafka _____________
+                producer.send(topic_name, dict_record)
 
-    # Delay to check the flow of batches in the Consumer
-    time.sleep(1)
+        # Print summary of sent records in current step
+        logger.info(f"Step {current_step}: Sent {sample_size:,} records ")
+        actual_sent_records += sample_size
 
+        # Delay to check the flow of batches in the Consumer
+        #time.sleep(1)
+
+        # Send remaining records in buffer
+        producer.flush()
+
+    # Print global summary of sent records
+    logger.info(f"Total sent records: {actual_sent_records:,}")
+
+except KeyboardInterrupt:
+    # Total sent records printed after user interruption
+    logger.debug("User Interruption")
+    logger.info(f"Total sent records: {actual_sent_records:,}")
     # Send remaining records in buffer
     producer.flush()
 
-# Print global summary of sent records
-logger.info(f"Total sent records: {actual_sent_records:,}")
+    exit(0)

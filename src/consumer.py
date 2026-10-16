@@ -38,7 +38,7 @@ except Exception as e:
     print(f"ERROR: Consumer creation failed:\n{e}")
     exit(1)
 
-# ____________________ Generate Stats ____________________
+# ________________ Consume records & generate stats ________________
 
 try:
     # Get stats of each cycle except the last one

@@ -9,44 +9,64 @@ topic_name = "transactions"
 # Create Logger
 logger = cmn.setup_logging("admin_broker.log")
 
-# Get Kafka Brokers' list
-SERVERS = cmn.get_servers_list()
 
-# ___________________ Create Broker Admin ___________________
-try:
-    admin_client = KafkaAdminClient(bootstrap_servers=SERVERS)
-    logger.info("Broker Admin created")
-except Exception as e:
-    logger.error(f"ERROR: Broker Admin creation failed:\n{e}")
-    exit(1)
+def create_broker_admin(logger) -> KafkaAdminClient:
 
-topic_is_nonexistent = (topic_name not in admin_client.list_topics())
-if topic_is_nonexistent:
+    # Get Kafka Brokers' list
+    SERVERS = cmn.get_servers_list()
+
     try:
-        # Create topic with 1 partition
+        admin = KafkaAdminClient(bootstrap_servers=SERVERS)
+        logger.info("Broker Admin created")
+        return admin
+    except Exception as e:
+        logger.error(f"ERROR: Broker Admin creation failed:\n{e}")
+        exit(1)
+
+
+def create_topic_with_partition(logger, admin, topic_name) -> int:
+    try:
         topic = NewTopic(
             name=topic_name,
             num_partitions=1,
             replication_factor=1
         )
-        admin_client.create_topics([topic])
-        logger.info("Topic created with 1 partition")
+        admin.create_topics([topic])
+        logger.info("Topic created")
+        nb_partitions = cmn.get_nb_partitions(admin, topic_name)
+        return nb_partitions
     except Exception as e:
         logger.error(f"ERROR: Topic creation failed:\n{e}")
-else:
-    try:
-        # Print number of partitions before update
-        nb_before = cmn.get_nb_partitions(admin_client, topic_name)
-        logger.info(f"{nb_before} partition(s) before update.")
 
+
+def add_1_partition_to_topic(logger, admin, topic_name, nb_before) -> int:
+    try:
         # Increment number of partitions
-        admin_client.create_partitions({
+        admin.create_partitions({
             topic_name: NewPartitions(total_count=nb_before+1)
         })
-
-        # Print number of partitions after update
-        nb_after = cmn.get_nb_partitions(admin_client, topic_name)
-        logger.info(f"{nb_after} partition(s) after update.")
-
+        nb_partitions = cmn.get_nb_partitions(admin, topic_name)
+        return nb_partitions
     except Exception as e:
         logger.error(f"ERROR: Topic update failed:\n{e}")
+
+# ___________________________ Main Process ___________________________
+
+
+def main():
+    # Creation of admin to manage topics & its partitions
+    admin = create_broker_admin()
+
+    # Check number of partitions before increment
+    nb_before = cmn.get_nb_partitions(admin, topic_name)
+    logger.info(f"{nb_before} partition(s) before update.")
+
+    # Increment number of partitions
+    topic_exists = (topic_name in admin.list_topics())
+    if topic_exists:
+        nb_after = add_1_partition_to_topic(logger, admin, topic_name, nb_before)
+    else:
+        nb_after = create_topic_with_partition(logger, admin, topic_name)
+
+    # Check number of partitions was incremented
+    logger.info(f"{nb_after} partition(s) after update.")
