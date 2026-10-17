@@ -55,7 +55,7 @@ def add_1_partition_to_topic(logger, admin, topic_name, nb_before) -> int:
 
 def main():
     # Creation of admin to manage topics & its partitions
-    admin = create_broker_admin()
+    admin = create_broker_admin(logger)
 
     # Check number of partitions before increment
     nb_before = cmn.get_nb_partitions(admin, topic_name)
@@ -70,3 +70,10 @@ def main():
 
     # Check number of partitions was incremented
     logger.info(f"{nb_after} partition(s) after update.")
+
+
+# Execute main() only if the script is called directly
+# not on import, where __name__ = module's name
+script_is_called_directly = (__name__ == "__main__")
+if script_is_called_directly:
+    main()
