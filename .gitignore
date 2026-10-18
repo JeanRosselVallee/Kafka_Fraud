@@ -156,3 +156,4 @@ cython_debug/
 
 data/
 log/
+config/broker_servers.txt

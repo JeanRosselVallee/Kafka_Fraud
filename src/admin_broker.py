@@ -6,7 +6,7 @@ from kafka.admin import KafkaAdminClient, NewTopic, NewPartitions
 
 topic_name = "transactions"
 
-# Create Logger
+# Logging
 logger = cmn.setup_logging("admin_broker.log")
 
 
@@ -54,7 +54,7 @@ def add_1_partition_to_topic(logger, admin, topic_name, nb_before) -> int:
 
 
 def main():
-    # Creation of admin to manage topics & its partitions
+    # Create Admin to manage topics & its partitions
     admin = create_broker_admin(logger)
 
     # Check number of partitions before increment
