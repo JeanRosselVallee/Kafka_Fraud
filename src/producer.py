@@ -3,8 +3,9 @@
 
 import pandas
 import lib_common as cmn
-import logging
 from kafka import KafkaProducer
+from kafka.serializer import JsonSerializer
+from logging import Logger
 
 # Set Producer parameters
 topic_name = "transactions"
@@ -16,19 +17,18 @@ source_folder = "~/Documents/Dev/git_projects/Kafka_Fraud/data"
 mock_file = source_folder + "/transactions.parquet"
 
 # Logging
-cmn.setup_logging("producer.log")
-APP_LOGGER_NAME = "fraud_detection"
-logger = logging.getLogger(APP_LOGGER_NAME)
+logfile_name = "producer.log"
 
 
-def create_producer(logger):
+def create_producer(logger: Logger) -> KafkaProducer:
     # Get Kafka Brokers' list
     SERVERS = cmn.get_servers_list()
 
     try:
         producer = KafkaProducer(
             bootstrap_servers=SERVERS,
-            value_serializer=cmn.convert_dict_to_bytes
+            # value_serializer=cmn.convert_dict_to_bytes
+            value_serializer=JsonSerializer()
         )
         logger.info('Producer created')
         return producer
@@ -41,18 +41,18 @@ def create_producer(logger):
     logger.info(f"Partition's id(s): {producer.partitions_for(topic_name)}")
 
 
-def send_records_to_broker(producer, topic_name, df_records,
-                           max_sample_size, max_batch_size, logger):
+def send_records_to_broker(producer: KafkaProducer, topic_name: str,
+                           df_records: pandas, max_sample_size: int,
+                           max_batch_size: int, logger: Logger) -> None:
     # Loop over "steps"
     # A "step" is a cyclic sequence corresponding to a set of transactions
     num_steps = max(df_records["step"])
     current_step = 0
     total_sent_records = 0
     try:
-        # while True:
-        while current_step < 20   :
+        while True:
             # Increment cyclic sequence "step"
-            current_step = (current_step + 1) % num_steps
+            current_step = (current_step % num_steps) + 1
 
             # Select a DF sample of records corresponding to current step
             filter_step = (df_records["step"] == current_step)
@@ -92,14 +92,18 @@ def send_records_to_broker(producer, topic_name, df_records,
         logger.info(f"Total sent records: {total_sent_records:,}")
         # Send remaining records in buffer
         producer.flush()
+        # Stop all activity linked to the producer
+        producer.close()
 
-        exit(0)
+        return
 
 
 # ___________________________ Main Process ___________________________
 
 
-def main():
+def main() -> None:
+    logger = cmn.setup_logging(logfile_name)
+
     # Create Producer
     producer = create_producer(logger)
 

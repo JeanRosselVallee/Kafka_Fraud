@@ -100,7 +100,7 @@ class Cycle:
         self.logger.info(f"_______________ Cycle {idx:>5} ______________\n" +
                          str_summary)
 
-    def get_summary_of_all_cycles(self) -> None:
+    def get_summary_of_all_cycles(self) -> pandas:
         """Log the full per-cycle table plus a totals row."""
         # Per-cycle summary table
         summary_title = "_______________ SUMMARY ALL CYCLES _______________"
@@ -117,6 +117,9 @@ class Cycle:
         df_totals.insert(0, "nb_cycles", nb_cycles)
         str_totals = f"{df_totals.to_string(index=False)}"
         self.logger.info(f"{totals_title}\n{str_totals}")
+
+        # Return the totals table for Unit Tests
+        return df_totals
 
     def check_1st_record(self, record: ConsumerRecord) -> None:
         """Debug-log the first consumed record's fields."""

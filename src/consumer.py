@@ -9,17 +9,22 @@
 import time
 import os
 import lib_common as cmn
+import pandas
 from kafka import KafkaConsumer
 from kafka.serializer import JsonSerializer
+from kafka.consumer.fetcher import ConsumerRecord
+from logging import Logger
 
 # Set Consumer & Cycle variables
-cycle_duration = 2 #60  # seconds
+cycle_duration = 60  # seconds
 topic_name = "transactions"
 group_id = "CG_fraud_detection"
 process_records_from = "latest"  # "earliest"
+logfile_prefix = "consumer"
 
 
-def create_consumer(topic_name, process_records_from, group_id):
+def create_consumer(topic_name: str, process_records_from: str,
+                    group_id: int) -> KafkaConsumer:
     # Get Kafka Brokers' list
     SERVERS = cmn.get_servers_list()
 
@@ -38,10 +43,11 @@ def create_consumer(topic_name, process_records_from, group_id):
         exit(1)
 
 
-def init_process(cycle_duration, consumer_record_i, process_records_from):
+def init_process(cycle_duration: int, consumer_record_i: ConsumerRecord,
+                 process_records_from: str) -> tuple[int, Logger]:
     # Create Logger
     process_pid = os.getpid()
-    logfile_name = f"consumer_{process_pid}.log"
+    logfile_name = f"{logfile_prefix}_{process_pid}.log"
     logger = cmn.setup_logging(logfile_name)
 
     # Start cycle counting
@@ -56,7 +62,7 @@ def init_process(cycle_duration, consumer_record_i, process_records_from):
     return cycle, logger
 
 
-def process_1_record(cycle, record_i):
+def process_1_record(cycle: cmn.Cycle, record_i: ConsumerRecord) -> cmn.Cycle:
     # Get transaction from Record's field 'Value'
     transaction_i = cmn.Transaction(**record_i.value)
 
@@ -72,7 +78,8 @@ def process_1_record(cycle, record_i):
     return cycle
 
 
-def process_records_in_cycles(consumer, cycle_duration, process_records_from):
+def process_records_in_cycles(consumer: KafkaConsumer, cycle_duration: int,
+                              process_records_from: str) -> pandas:
     # Process records received from Broker
     process_started = False
     try:
@@ -94,20 +101,28 @@ def process_records_in_cycles(consumer, cycle_duration, process_records_from):
         cycle.get_counters_per_cycle()
 
         # Print a summary of all cycles
-        cycle.get_summary_of_all_cycles()
+        df_totals = cycle.get_summary_of_all_cycles()
 
-        exit(0)
+        # Return the totals table for Unit Tests
+        return df_totals
 
 
 # ___________________________ Main Process ___________________________
 
 
-def main():
+def main() -> pandas:
     # Create Consumer
     consumer = create_consumer(topic_name, process_records_from, group_id)
 
     # Process records received from Broker
-    process_records_in_cycles(consumer, cycle_duration, process_records_from)
+    df_totals = process_records_in_cycles(consumer, cycle_duration, 
+                                          process_records_from)
+
+    # Stop all activity linked to the consumer
+    consumer.close()
+
+    # Return the totals table for Unit Tests
+    return df_totals
 
 
 # Execute main() only if the script is called directly

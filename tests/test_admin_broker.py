@@ -1,29 +1,23 @@
 # Syntax: pytest tests/test_admin_broker.py
 
-import pytest
-from unittest.mock import patch, MagicMock
+# Run twice to test incrementing partitions
+# - from 1 to 2 at topic creation
+# - from 2 to 3 at topic update
+
 import admin_broker
 
 
-# Fixture functions to run before every test function
+def test_increment_nb_of_partitions_by_admin(monkeypatch) -> None:
+    # monkeypatch is pytest's fixture that replaces attributes & functions
 
+    # Replace global variables in consumer.py
+    monkeypatch.setattr(admin_broker, "topic_name", "test_admin_broker")
+    monkeypatch.setattr(admin_broker, "logfile_name", "test_admin_broker.log")
 
-@pytest.fixture
-def mock_logger():
-    return MagicMock()
+    # Test that admin_broker's main() increments the number of partitions
+    nb_before, nb_after = admin_broker.main()
 
-
-@pytest.fixture
-def mock_admin():
-    return MagicMock()
-
-# Tests of create_broker_admin()
-
-@patch("admin_broker.KafkaAdminClient")
-@patch("admin_broker.cmn.get_servers_list", return_value=["localhost:9092"])
-def test_create_broker_admin_ok(mock_servers, mock_client_cls, mock_logger):
-    fake_admin = MagicMock()
-    mock_client_cls.return_value = fake_admin
-    result = admin_broker.create_broker_admin(mock_logger)
-    assert result is fake_admin
-    mock_logger.info.assert_called_once_with("Broker Admin created")
+    # Assert the increment
+    print(f"nb_before={nb_before} should increment to nb_after={nb_after}")
+    failure_message = f"nb_after={nb_after} while nb_before={nb_before}"
+    assert nb_after == nb_before + 1, failure_message

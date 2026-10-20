@@ -3,14 +3,15 @@
 
 import lib_common as cmn
 from kafka.admin import KafkaAdminClient, NewTopic, NewPartitions
+from logging import Logger
 
 topic_name = "transactions"
 
 # Logging
-logger = cmn.setup_logging("admin_broker.log")
+logfile_name = "admin_broker.log"
 
 
-def create_broker_admin(logger) -> KafkaAdminClient:
+def create_broker_admin(logger: Logger) -> KafkaAdminClient:
 
     # Get Kafka Brokers' list
     SERVERS = cmn.get_servers_list()
@@ -24,7 +25,8 @@ def create_broker_admin(logger) -> KafkaAdminClient:
         exit(1)
 
 
-def create_topic_with_partition(logger, admin, topic_name) -> int:
+def create_topic_with_partition(logger: Logger, admin: KafkaAdminClient,
+                                topic_name: str) -> int:
     try:
         topic = NewTopic(
             name=topic_name,
@@ -39,7 +41,8 @@ def create_topic_with_partition(logger, admin, topic_name) -> int:
         logger.error(f"ERROR: Topic creation failed:\n{e}")
 
 
-def add_1_partition_to_topic(logger, admin, topic_name, nb_before) -> int:
+def add_1_partition_to_topic(logger: Logger, admin: KafkaAdminClient,
+                             topic_name: str, nb_before: int) -> int:
     try:
         # Increment number of partitions
         admin.create_partitions({
@@ -53,7 +56,9 @@ def add_1_partition_to_topic(logger, admin, topic_name, nb_before) -> int:
 # ___________________________ Main Process ___________________________
 
 
-def main():
+def main() -> tuple[int, int]:
+    logger = cmn.setup_logging(logfile_name)
+
     # Create Admin to manage topics & its partitions
     admin = create_broker_admin(logger)
 
@@ -64,12 +69,15 @@ def main():
     # Increment number of partitions
     topic_exists = (topic_name in admin.list_topics())
     if topic_exists:
-        nb_after = add_1_partition_to_topic(logger, admin, topic_name, nb_before)
+        nb_after = add_1_partition_to_topic(logger, admin, topic_name,
+                                            nb_before)
     else:
         nb_after = create_topic_with_partition(logger, admin, topic_name)
 
     # Check number of partitions was incremented
     logger.info(f"{nb_after} partition(s) after update.")
+
+    return nb_before, nb_after
 
 
 # Execute main() only if the script is called directly
