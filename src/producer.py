@@ -71,27 +71,36 @@ def send_records_to_broker(producer: KafkaProducer, topic_name: str,
                 option_get_dicts = "records"
                 dict_records = df_batch_i.to_dict(option_get_dicts)
 
-                # Send Dict records 1-by-1 
+                # Send Dict records 1-by-1
                 for dict_record in dict_records:
                     # ___________ Send record to Kafka _____________
                     producer.send(topic_name, dict_record)
 
             # Print summary of sent records in current step
-            logger.info(f"Step {current_step:>4}: Sent {sample_size:,} records ")
+            logger.info(f"Step {current_step:>4}: Sent {sample_size:,} records")
             total_sent_records += sample_size
 
             # Send remaining records in buffer
             producer.flush()
 
-        # Print global summary of sent records
-        logger.info(f"Total sent records: {total_sent_records:,}")
+            # Testing on this script requires only the 1st iteration record
+            if "test" in topic_name:
+                # Print global summary of sent records
+                logger.info(f"Total sent records: {total_sent_records:,}")
+                # Stop all activity linked to the producer
+                producer.close()
+                return
 
     except KeyboardInterrupt:
         # Print total sent records after user interruption
         logger.debug("User Interruption")
+
+        # Print global summary of sent records
         logger.info(f"Total sent records: {total_sent_records:,}")
+
         # Send remaining records in buffer
         producer.flush()
+
         # Stop all activity linked to the producer
         producer.close()
 
