@@ -14,7 +14,7 @@ def test_producer_with_testing_consumer(monkeypatch) -> None:
     # monkeypatch is pytest's fixture that replaces attributes & functions
 
     # Replace global cmn.topic_name
-    topic_name = "test_producer2"
+    topic_name = "test_producer"
     monkeypatch.setattr(producer, "topic_name", topic_name)
     monkeypatch.setattr(producer, "logfile_name", "test_producer.log")
 

@@ -18,6 +18,7 @@ def test_consumer_with_basic_producer(monkeypatch) -> None:
     # Replace global variables in consumer.py
     topic_name = "test_consumer"
     monkeypatch.setattr(consumer, "topic_name", topic_name)
+    monkeypatch.setattr(consumer, "process_records_from", "earliest")
     monkeypatch.setattr(consumer, "group_id", "CG_test_consumer")
     monkeypatch.setattr(consumer, "logfile_prefix", "test_consumer")
 

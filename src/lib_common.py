@@ -4,7 +4,7 @@ import logging
 import colorlog
 import json
 import os
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, fields, field, asdict
 from kafka.admin import KafkaAdminClient
 from kafka.consumer.fetcher import ConsumerRecord
 
@@ -13,6 +13,7 @@ from kafka.consumer.fetcher import ConsumerRecord
 path_servers_list = "./config/broker_servers.txt"
 path_log_dir = "./log/"
 
+app_log_level = logging.DEBUG  # DEBUG INFO
 
 @dataclass
 class Transaction:
@@ -36,31 +37,45 @@ class Stats:
     fraud_count: int = field(default=0, init=False)
     total_amount: float = field(default=0.0, init=False)
     fraud_amount: float = field(default=0.0, init=False)
+    nb_cycles: int = field(default=1, init=False)
+    time_elapsed: float = field(default=0.0, init=False)
+
+
+@dataclass
+class RollingWindow:
+    """..."""
+    idx: int = field(default=0, init=False)
+    size: int = field(default=30, init=True)
+    start: float = field(default=0.0, init=False)
+    df: pandas.DataFrame = field(init=False)
 
 
 @dataclass
 class Cycle:
     """Tracks stats over fixed-duration windows & prints a summary."""
-    logger: object = field(init=True)
-    duration: int = field(default=60, init=True)
+    idx: int = field(default=0, init=False)
+    logger: object = field(init=True)  # init: required arg at instantiation
+    duration_wished: int = field(default=1, init=True)
     start: float = field(default=0.0, init=False)
-    is_1st_record: bool = field(default=True, init=False)
-    df_summary: pandas.DataFrame = field(init=False)
-    # stats' "factory" calls constructor Stats()
+    # is_1st_record: bool = field(default=True, init=False)
+    df: pandas.DataFrame = field(init=False)
+
+    # "default_factory" calls Class' constructor
     stats: Stats = field(default_factory=Stats, init=False)
+    # window: RollingWindow = field(default_factory=RollingWindow, init=True)
 
     def __post_init__(self) -> None:
         """DF Summary with named index & float 1000-separator format"""
         columns = ["fraud_count", "tx_count",
                    "total_amount", "fraud_amount", "non_fraud_amount",
                    "fraud_ratio_%"]
-        self.df_summary = pandas.DataFrame(columns=columns)
-        self.df_summary.index.name = "cycle_ref"
+        self.df = pandas.DataFrame(columns=columns)
+        self.df.index.name = "cycle_ref"
         pandas.set_option("display.float_format", "{:,.2f}".format)
 
         self.reset_counters()
 
-    def reset_counters(self) -> None:
+    def reset_counters(self, window_size: int = 0) -> None:
         """Zero all counters & restart cycle timer."""
         self.stats.fraud_count = 0
         self.stats.tx_count = 0
@@ -78,48 +93,69 @@ class Cycle:
             self.stats.fraud_count += 1
             self.stats.fraud_amount += tx_amount
 
-    def get_counters_per_cycle(self) -> None:
+    def set_counters_per_cycle(self, window: RollingWindow) -> None:
         """Append current cycle's stats as a new DF row & log the row."""
-        idx = len(self.df_summary)
+        #idx = len(self.df)
+        idx = self.idx
 
         stats_dict = asdict(self.stats)
-        fields = ["tx_count", "fraud_count", "total_amount", "fraud_amount"]
-        self.df_summary.loc[idx, fields] = [stats_dict[col] for col in fields]
+        stats_fields = [f.name for f in fields(self.stats)]
+        # stats_fields = ["tx_count", "fraud_count", "total_amount", "fraud_amount", "time_elapsed"]
+        self.df.loc[idx, stats_fields] = [stats_dict[col] for col in stats_fields]
 
         # Derived fields: non-fraud amount & fraud ratio
-        self.df_summary.loc[idx, "non_fraud_amount"] = \
-            self.stats.total_amount - self.stats.fraud_amount
-        if self.stats.total_amount:
-            self.df_summary.loc[idx, "fraud_ratio_%"] = \
-                self.stats.fraud_amount / self.stats.total_amount * 100
+        # self.df.loc[idx, "non_fraud_amount"] = \
+        #     self.stats.total_amount - self.stats.fraud_amount
+        # if self.stats.total_amount:
+        #     self.df.loc[idx, "fraud_ratio_%"] = \
+        #         self.stats.fraud_amount / self.stats.total_amount * 100
 
         # Log the new row in a readable key:value format
-        dict_summary = self.df_summary.iloc[-1].to_dict()
-        str_summary = "\n".join(f"{k:>40}: {v:>20,.0f}"
-                                for k, v in dict_summary.items())
-        self.logger.info(f"_______________ Cycle {idx:>5} ______________\n" +
-                         str_summary)
+        # dict_summary = self.df.iloc[-1].to_dict()
+        # str_summary = "\n".join(f"{k:>40}: {v:>20,.0f}"
+        #                         for k, v in dict_summary.items())
+        # self.logger.info(f"_______________ Cycle {idx:>5} ______________\n" +
+        #                  str_summary)
+        self.df = self.df[-window.size:]
+        # DEBUG self.logger.debug(f"{self.df}")
 
-    def get_summary_of_all_cycles(self) -> pandas:
+    def set_counters_per_window(self, window: RollingWindow) -> None:
         """Log the full per-cycle table plus a totals row."""
-        # Per-cycle summary table
-        summary_title = "_______________ SUMMARY ALL CYCLES _______________"
-        str_summary = f"{self.df_summary.reset_index().to_string(index=False)}"
-        self.logger.info(f"{summary_title}\n{str_summary}")
+
+        # Detail of window's cycles
+        str_detail = f"{self.df.fillna("").reset_index().to_string(index=False)}"
 
         # All-cycles' Totals table
-        totals_title = "_____________________ TOTALS _____________________"
-        df_totals = self.df_summary.sum().to_frame().T
-        if df_totals["total_amount"].values[0] != 0:
-            df_totals["fraud_ratio_%"] = \
-                df_totals["fraud_amount"] / df_totals["total_amount"] * 100
-        nb_cycles = len(self.df_summary)
-        df_totals.insert(0, "nb_cycles", nb_cycles)
-        str_totals = f"{df_totals.to_string(index=False)}"
-        self.logger.info(f"{totals_title}\n{str_totals}")
+        df = self.df.fillna(0).sum().to_frame().T
+        total_amount = df["total_amount"].values[0]
+        fraud_amount = df["fraud_amount"].values[0]
 
-        # Return the totals table for Unit Tests
-        return df_totals
+        # Derived fields: non-fraud amount & fraud ratio
+        df.loc[0, "non_fraud_amount"] = \
+            total_amount - fraud_amount
+        if total_amount != 0:
+            # df["fraud_ratio_%"] = \
+            #     fraud_amount / total_amount * 100
+            df.loc[0, "fraud_ratio_%"] = \
+                fraud_amount / total_amount * 100
+        nb_cycles = len(self.df)
+        #df.insert(0, "nb_cycles", nb_cycles)
+        df.insert(0, "cycle_ref", self.idx)
+        window.df = pandas.concat([window.df, df])
+
+        str_totals = f"{window.df.iloc[-1:].to_string(index=False)}"
+
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug(
+                f"\n{'=' * 41} Rolling Window #{self.idx:>5} {'=' * 41}" +
+                f"\n{str_detail}" +
+                f"\n{'_' * 65} Totals {'_' * 22}" +
+                f"\n{str_totals}"
+            )
+        else:
+            self.logger.info(
+                f"\n{str_totals}"
+            )
 
     def check_1st_record(self, record: ConsumerRecord) -> None:
         """Debug-log the first consumed record's fields."""
@@ -187,7 +223,7 @@ def setup_logging(logfile_name: str) -> None:
 
     # 2. App logger
     custom_logger = logging.getLogger("fraud_detection")
-    custom_logger.setLevel(logging.DEBUG)
+    custom_logger.setLevel(app_log_level)
     custom_logger.propagate = False  # Prevent duplicate output to root logger
 
     # 2.1 Console colored handler
