@@ -15,6 +15,7 @@ path_log_dir = "./log/"
 
 app_log_level = logging.DEBUG  # DEBUG INFO
 
+
 @dataclass
 class Transaction:
     """Single bank transaction record & mirrors Kafka message fields."""
@@ -31,12 +32,15 @@ class Transaction:
 
 
 @dataclass
-class Stats:
+class Counters:
     """Mutable counters for one cycle & initialized with default 0 values."""
-    tx_count: int = field(default=0, init=False)
-    fraud_count: int = field(default=0, init=False)
-    total_amount: float = field(default=0.0, init=False)
-    fraud_amount: float = field(default=0.0, init=False)
+    cycle_ref: int = field(default=0, init=False)
+    tx_count: int = field(default=0, init=True)
+    fraud_count: int = field(default=0, init=True)
+    total_amount: float = field(default=0.0, init=True)
+    fraud_amount: float = field(default=0.0, init=True)
+    non_fraud_amount: float = field(default=None, init=False)
+    fraud_ratio_pct: float = field(default=None, init=False)
     nb_cycles: int = field(default=1, init=False)
     time_elapsed: float = field(default=0.0, init=False)
 
@@ -47,7 +51,7 @@ class RollingWindow:
     idx: int = field(default=0, init=False)
     size: int = field(default=30, init=True)
     start: float = field(default=0.0, init=False)
-    df: pandas.DataFrame = field(init=False)
+    df_history: pandas.DataFrame = field(init=False)
 
 
 @dataclass
@@ -58,98 +62,85 @@ class Cycle:
     duration_wished: int = field(default=1, init=True)
     start: float = field(default=0.0, init=False)
     # is_1st_record: bool = field(default=True, init=False)
-    df: pandas.DataFrame = field(init=False)
+    df_history: pandas.DataFrame = field(init=False)
 
     # "default_factory" calls Class' constructor
-    stats: Stats = field(default_factory=Stats, init=False)
+    counters: Counters = field(default_factory=Counters, init=False)
+    counters_fields: list[str] = field(
+        default_factory=lambda: [f.name for f in fields(Counters)], init=False)
     # window: RollingWindow = field(default_factory=RollingWindow, init=True)
 
     def __post_init__(self) -> None:
         """DF Summary with named index & float 1000-separator format"""
-        columns = ["fraud_count", "tx_count",
-                   "total_amount", "fraud_amount", "non_fraud_amount",
-                   "fraud_ratio_%"]
-        self.df = pandas.DataFrame(columns=columns)
-        self.df.index.name = "cycle_ref"
+        self.df_history = pandas.DataFrame(columns=self.counters_fields)
         pandas.set_option("display.float_format", "{:,.2f}".format)
 
         self.reset_counters()
 
-    def reset_counters(self, window_size: int = 0) -> None:
+    def reset_counters(self) -> None:
         """Zero all counters & restart cycle timer."""
-        self.stats.fraud_count = 0
-        self.stats.tx_count = 0
-        self.stats.fraud_amount = 0
-        self.stats.total_amount = 0
+        self.counters = Counters()
         self.start = time.time()
 
-    def set_counters_per_transaction(self, transaction: Transaction) -> None:
+    def append_transaction_to_cycle(self, transaction: Transaction) -> None:
         """Integrate one transaction to the current cycle's counters."""
-        self.stats.tx_count += 1
+        self.counters.tx_count += 1
         tx_amount = transaction.amount
-        self.stats.total_amount += tx_amount
+        self.counters.total_amount += tx_amount
 
         if transaction.isFraud == 1:
-            self.stats.fraud_count += 1
-            self.stats.fraud_amount += tx_amount
+            self.counters.fraud_count += 1
+            self.counters.fraud_amount += tx_amount
 
-    def set_counters_per_cycle(self, window: RollingWindow) -> None:
+    def store_cycle(self, window_size: int) -> None:
         """Append current cycle's stats as a new DF row & log the row."""
-        #idx = len(self.df)
-        idx = self.idx
 
-        stats_dict = asdict(self.stats)
-        stats_fields = [f.name for f in fields(self.stats)]
-        # stats_fields = ["tx_count", "fraud_count", "total_amount", "fraud_amount", "time_elapsed"]
-        self.df.loc[idx, stats_fields] = [stats_dict[col] for col in stats_fields]
+        # Increment cycle index and set cycle reference
+        self.idx += 1
 
-        # Derived fields: non-fraud amount & fraud ratio
-        # self.df.loc[idx, "non_fraud_amount"] = \
-        #     self.stats.total_amount - self.stats.fraud_amount
-        # if self.stats.total_amount:
-        #     self.df.loc[idx, "fraud_ratio_%"] = \
-        #         self.stats.fraud_amount / self.stats.total_amount * 100
+        cycle_counters_dict = asdict(self.counters)
+        self.df_history.loc[self.idx, self.counters_fields] = \
+            [cycle_counters_dict[col] for col in self.counters_fields]
+        self.df_history.loc[self.idx, "cycle_ref"] = self.idx
 
-        # Log the new row in a readable key:value format
-        # dict_summary = self.df.iloc[-1].to_dict()
-        # str_summary = "\n".join(f"{k:>40}: {v:>20,.0f}"
-        #                         for k, v in dict_summary.items())
-        # self.logger.info(f"_______________ Cycle {idx:>5} ______________\n" +
-        #                  str_summary)
-        self.df = self.df[-window.size:]
-        # DEBUG self.logger.debug(f"{self.df}")
+        self.df_history = self.df_history[-window_size:]
+        # DEBUG self.logger.debug(f"{self.df_history}")
 
-    def set_counters_per_window(self, window: RollingWindow) -> None:
+    def get_and_historize_window(self, window: RollingWindow) -> None:
         """Log the full per-cycle table plus a totals row."""
 
-        # Detail of window's cycles
-        str_detail = f"{self.df.fillna("").reset_index().to_string(index=False)}"
+        # Get totals of cycles in current window
+        df_current_window = self.df_history.fillna(0).sum().to_frame().T
 
-        # All-cycles' Totals table
-        df = self.df.fillna(0).sum().to_frame().T
-        total_amount = df["total_amount"].values[0]
-        fraud_amount = df["fraud_amount"].values[0]
+        # Set window's reference = last cycle's reference
+        df_current_window.loc[0, "cycle_ref"] = self.idx
 
-        # Derived fields: non-fraud amount & fraud ratio
-        df.loc[0, "non_fraud_amount"] = \
-            total_amount - fraud_amount
+        # Append derived fields to DF current window
+        total_amount = df_current_window["total_amount"].values[0]
+        fraud_amount = df_current_window["fraud_amount"].values[0]
+        # 1. Non-fraud amount
+        df_current_window.loc[0, "non_fraud_amount"] = \
+            total_amount - fraud_amount        
+        # 2. Fraud ratio
         if total_amount != 0:
-            # df["fraud_ratio_%"] = \
-            #     fraud_amount / total_amount * 100
-            df.loc[0, "fraud_ratio_%"] = \
+            df_current_window.loc[0, "fraud_ratio_pct"] = \
                 fraud_amount / total_amount * 100
-        nb_cycles = len(self.df)
-        #df.insert(0, "nb_cycles", nb_cycles)
-        df.insert(0, "cycle_ref", self.idx)
-        window.df = pandas.concat([window.df, df])
 
-        str_totals = f"{window.df.iloc[-1:].to_string(index=False)}"
+        # Append current window to DF history
+        window.df_history = pandas.concat([window.df_history,
+                                           df_current_window])
+
+    def print_window(self, window: RollingWindow) -> None:
+        # Detail of window's cycles
+        str_detail = f"{self.df_history.fillna("").to_string(index=False)}"
+        # Totals of window's cycles
+        str_totals = f"{window.df_history.iloc[-1:].to_string(index=False)}"
 
         if self.logger.isEnabledFor(logging.DEBUG):
             self.logger.debug(
-                f"\n{'=' * 41} Rolling Window #{self.idx:>5} {'=' * 41}" +
+                f"\n{'=' * 49} Rolling Window #{self.idx:>5} {'=' * 41}" +
                 f"\n{str_detail}" +
-                f"\n{'_' * 65} Totals {'_' * 22}" +
+                f"\n{'_' * 65} Totals {'_' * 42}" +
                 f"\n{str_totals}"
             )
         else:
@@ -175,7 +166,7 @@ def get_servers_list() -> list:
 
 
 def get_nb_partitions(client: KafkaAdminClient, topic_name: str) -> int:
-    """Get the current number of partitions for a topic."""
+    """Provide admin_broker with current number of partitions for a topic."""
     topic_metadata = client.describe_topics([topic_name])[0]
     current_nb = len(topic_metadata["partitions"])
     return current_nb
