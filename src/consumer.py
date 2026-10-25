@@ -25,7 +25,8 @@ window_duration = 3  # Rolling window length in seconds (requirement: 30s)
 topic_name = "transactions"
 group_id = "CG_fraud_detection"
 process_records_from = "latest"  # latest or earliest
-logfile_prefix = "consumer"
+file_prefix = "consumer"
+output_dir = "./data/"
 
 
 def create_consumer(topic_name: str, process_records_from: str,
@@ -59,8 +60,12 @@ def init_cycle_and_window(
 
     # Initialize Logger: 1 logfile per consumer
     process_pid = os.getpid()
-    logfile_name = f"{logfile_prefix}_{process_pid}.log"
+    logfile_name = f"{file_prefix}_{process_pid}.log"
     logger = cmn.setup_logging(logfile_name)
+
+    # Initialize Output: 1 CSV file per consumer
+    window.csv_file_path = \
+        f"{output_dir}{file_prefix}_results_{process_pid}.csv"
 
     # Initialize Cycle
     cycle = cmn.Cycle(logger, cycle_duration)

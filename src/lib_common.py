@@ -9,7 +9,7 @@ from kafka.admin import KafkaAdminClient
 from kafka.consumer.fetcher import ConsumerRecord
 
 
-# Configuration paths
+# Configuration
 path_servers_list = "./config/broker_servers.txt"
 path_log_dir = "./log/"
 
@@ -41,8 +41,8 @@ class Counters:
     fraud_count: int = field(default=0, init=True)
     total_amount: float = field(default=0.0, init=True)
     fraud_amount: float = field(default=0.0, init=True)
-    non_fraud_amount: float = field(default=None, init=False)
-    fraud_ratio_pct: float = field(default=None, init=False)
+    non_fraud_amount: float = field(default=float('nan'), init=False)
+    fraud_ratio_pct: float = field(default=float('nan'), init=False)
     nb_cycles: int = field(default=1, init=False)
     time_elapsed: float = field(default=0.0, init=False)
 
@@ -54,6 +54,7 @@ class RollingWindow:
 
     duration: int = field(default=30, init=True)
     df_history: pandas.DataFrame = field(init=False)
+    csv_file_path: str = field(default="consumer_results.csv", init=False)
 
     def get_and_historize_window(self, cycle: Cycle) -> None:
         """Aggregates current cycle history into a window totals row;
@@ -80,6 +81,14 @@ class RollingWindow:
         self.df_history = pandas.concat([self.df_history,
                                          df_current_window])
 
+    def append_to_csv(self, df_row: pandas.DataFrame) -> None:
+        header_required = not os.path.exists(self.csv_file_path)
+        df_row.to_csv(self.csv_file_path,
+                      mode="a",
+                      header=header_required,
+                      index=False,
+                      float_format="%.2f")
+
     def log_window(self, cycle: Cycle) -> None:
         "Logs cycle detail and window totals;"
         "DEBUG shows detail, INFO shows totals only."
@@ -87,7 +96,12 @@ class RollingWindow:
         # Detail of window's cycles
         str_detail = f"{cycle.df_history.fillna("").to_string(index=False)}"
         # Totals of window's cycles
-        str_totals = f"{self.df_history.iloc[-1:].to_string(index=False)}"
+        df_current_window = self.df_history.iloc[-1:]
+
+        # Copy dtypes from Counters fields
+        df_current_window = df_current_window.astype(
+             {f.name: f.type for f in fields(Counters)})
+        str_totals = f"{df_current_window.to_string(index=False)}"
 
         if cycle.logger.isEnabledFor(logging.DEBUG):
             cycle.logger.debug(
@@ -100,6 +114,9 @@ class RollingWindow:
             cycle.logger.info(
                 f"\n{str_totals}"
             )
+
+        # Append window's totals to CSV file
+        self.append_to_csv(df_current_window)
 
     def log_windows_summary(self, logger: logging.Logger) -> None:
         """Log full window history & global totals across all windows."""
@@ -136,7 +153,6 @@ class Cycle:
     counters: Counters = field(default_factory=Counters, init=False)
     counter_fieldnames: list[str] = field(
         default_factory=lambda: [f.name for f in fields(Counters)], init=False)
-    # window: RollingWindow = field(default_factory=RollingWindow, init=True)
 
     def __post_init__(self) -> None:
         """Initializes empty cycle-history DF
