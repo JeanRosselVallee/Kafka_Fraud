@@ -20,16 +20,18 @@ from kafka.consumer.fetcher import ConsumerRecord
 from logging import Logger
 
 # Configuration
-cycle_duration = 1  # in seconds. Requirement: cycle_duration = 1s
-window_size = 3  # in seconds. Requirement: window_size = 30s
+cycle_duration = 1  # Cycle length in seconds (requirement: 1s)
+window_duration = 3  # Rolling window length in seconds (requirement: 30s)
 topic_name = "transactions"
 group_id = "CG_fraud_detection"
-process_records_from = "latest"  # "earliest"
+process_records_from = "latest"  # latest or earliest
 logfile_prefix = "consumer"
 
 
 def create_consumer(topic_name: str, process_records_from: str,
                     group_id: int) -> KafkaConsumer:
+    """Create a KafkaConsumer subscribed to topic_name; exit on failure."""
+
     # Get Kafka Brokers' list
     SERVERS = cmn.get_servers_list()
 
@@ -49,12 +51,13 @@ def create_consumer(topic_name: str, process_records_from: str,
         exit(1)
 
 
-def init_consumer(
+def init_cycle_and_window(
         cycle_duration: int, consumer_record_i: ConsumerRecord,
         process_records_from: str, window: cmn.RollingWindow
-        ) -> tuple[int, Logger]:
+        ) -> tuple[cmn.Cycle, Logger]:
+    """Initialize Cycle, Window, logger; return cycle & logger."""
 
-    # Initialize Logger
+    # Initialize Logger: 1 logfile per consumer
     process_pid = os.getpid()
     logfile_name = f"{logfile_prefix}_{process_pid}.log"
     logger = cmn.setup_logging(logfile_name)
@@ -63,13 +66,13 @@ def init_consumer(
     cycle = cmn.Cycle(logger, cycle_duration)
     cycle.start = time.time()
     logger.info(f"Counters from a Kafka flow on topic '{topic_name}' in " +
-                f"rolling windows of {window_size} cycles that process " +
+                f"rolling windows of {window_duration} cycles that process " +
                 f"records from the {process_records_from} one on.")
 
-    # Initialize Window
+    # Initialize Window: window's df_history mirrors empty cycle's df_history
     window.df_history = cycle.df_history.copy()
 
-    # Initialize Testing: print 1st record
+    # Initialize Testing: check 1st record's format & contents
     if "test" in topic_name:
         cycle.check_1st_record(consumer_record_i)
 
@@ -79,46 +82,53 @@ def init_consumer(
 def process_records_in_cycles(consumer: KafkaConsumer, cycle_duration: int,
                               process_records_from: str,
                               window: cmn.RollingWindow) -> pandas:
-    # Process records received from Broker
-    process_started = False
+    """Process records, updating cycle & window counters;
+    on KeyboardInterrupt, log summary and return window history."""
+
+    # Flag on existence of cycle & window instances
+    cycle_and_window_created = False
     try:
         # Get stats of each window except the last one
         for consumer_record_i in consumer:
 
-            if not process_started:
-                cycle, logger = init_consumer(
+            # Creates cycle, window & logger when record reception starts
+            if not cycle_and_window_created:
+                cycle, logger = init_cycle_and_window(
                     cycle_duration, consumer_record_i,
                     process_records_from, window)
-                process_started = True
+                cycle_and_window_created = True
 
-            update_counters(cycle, consumer_record_i, window)
+            process_record(cycle, consumer_record_i, window)
 
     except KeyboardInterrupt:
-        # Last-window & windows' summary are printed after user interruption
+        # Get stats of last-window & log windows' summary on user interruption
         logger.debug("User Interruption")
 
+        # Flush last (partial) cycle into window
         aggregate_window_cycles(cycle, window)
 
         # Print a summary of all windows
-        print_windows_summary(window, logger)
+        window.log_windows_summary(cycle.logger)
 
-        # Return the totals table for Unit Tests
+        # Return window totals table for pytest
         return window.df_history
 
 
-def update_counters(cycle: cmn.Cycle, record_i: ConsumerRecord,
-                    window: cmn.RollingWindow) -> cmn.Cycle:
+def process_record(cycle: cmn.Cycle, record_i: ConsumerRecord,
+                   window: cmn.RollingWindow) -> cmn.Cycle:
+    """Parse one record, update cycle counters;
+    on cycle end, aggregate into window and reset."""
 
     # Extract transaction from Record's field 'Value'
     transaction_i = cmn.Transaction(**record_i.value)
 
     # Update current cycle counters with current transaction
-    cycle.append_transaction_to_cycle(transaction_i)
+    cycle.update_counters(transaction_i)
 
-    # Detect when cycle ends
+    # Cycle ends when its expected duration is exceeded
     current_time = time.time()
     cycle.counters.time_elapsed = current_time - cycle.start
-    cycle_ended = (cycle.counters.time_elapsed > cycle.duration_wished)
+    cycle_ended = (cycle.counters.time_elapsed > cycle.duration)
 
     if cycle_ended:
         aggregate_window_cycles(cycle, window)
@@ -132,38 +142,23 @@ def aggregate_window_cycles(cycle: cmn.Cycle, window: cmn.RollingWindow) \
     """Historize & print cycles & totals of current window"""
 
     # Historize current cycle counters
-    cycle.store_cycle(window.size)
+    cycle.historize_cycle(window.duration)
 
     # Get current window counters & historize it
-    cycle.get_and_historize_window(window)
+    window.get_and_historize_window(cycle)
 
     # Log-print window counters
-    cycle.print_window(window)
-
-
-def print_windows_summary(window: cmn.RollingWindow, logger: Logger) -> None:
-
-    # Print DF history of windows
-    str_windows = f"{window.df_history.to_string(index=False)}"
-    logger.info(f"\n{'=' * 46} Summary of Rolling Windows {'=' * 41}" +
-                f"\n{str_windows}")
-
-    # Print Totals out of all windows
-    df_totals = window.df_history.sum().to_frame().T
-    df_totals.loc[df_totals.index[-1], "cycle_ref"] = None
-    df_totals["fraud_ratio_pct"] = \
-        df_totals["fraud_amount"] / df_totals["total_amount"] * 100
-    str_totals = f"{df_totals.to_string(index=False)}"
-    logger.info(f"\n{'=' * 46} Totals of Rolling Windows {'=' * 41}" +
-                f"\n{str_totals}")
+    window.log_window(cycle)
 
 
 # ___________________________ Main Process ___________________________
 
 
 def main() -> pandas:
+    """Create consumer, process records in cycles, close consumer,
+    return window history."""
 
-    window = cmn.RollingWindow(size=window_size)
+    window = cmn.RollingWindow(duration=window_duration)
 
     # Create Consumer
     consumer = create_consumer(topic_name, process_records_from, group_id)
@@ -175,7 +170,7 @@ def main() -> pandas:
     # Stop all activity linked to the consumer
     consumer.close()
 
-    # Return the totals table for Unit Tests
+    # Return the totals table for pytest
     return df_totals
 
 
